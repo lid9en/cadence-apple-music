@@ -64,8 +64,8 @@ or build from source below.
 ### Run from source
 
 ```bat
-git clone https://github.com/YOUR-USERNAME/cadence.git
-cd cadence
+git clone https://github.com/lid9en/cadence-apple-music.git
+cd cadence-apple-music
 Cadence.bat
 ```
 
