@@ -1,0 +1,388 @@
+"""Application controller and the JavaScript bridge.
+
+Owns the media engine, the history database, the hotkey manager and the
+WebView window, and exposes a small RPC surface to the UI as
+`window.pywebview.api.*`.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import threading
+import webbrowser
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+from . import applemusic_fix, enrich, lyrics as lyrics_mod, palette, win_effects
+from .config import Settings
+from .history import History, PlayTracker
+from .hotkeys import HotkeyManager
+from .media import MediaEngine
+
+WEB_DIR = Path(__file__).parent / "web"
+
+LAYOUT_SIZES = {
+    "card": (380, 560),
+    "bar": (680, 104),
+    "compact": (400, 148),
+    "art": (330, 330),
+}
+PANEL_SIZE = (980, 700)
+
+
+def _data_uri(data: bytes, mime: str = "image/jpeg") -> str:
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _sniff_mime(data: bytes) -> str:
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"GIF":
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+class CadenceApp:
+    def __init__(self):
+        self.settings = Settings()
+        self.history = History()
+        self.tracker = PlayTracker(self.history, self.settings)
+        self.engine = MediaEngine(self.settings)
+        self.hotkeys = HotkeyManager(self._on_hotkey)
+
+        self.window = None
+        self.view = "player"
+        self._pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="cadence-bg")
+        self._lock = threading.RLock()
+
+        # Per-track derived data, only valid for _current_key.
+        self._current_key = ""
+        self._meta: dict = {}
+        self._lyrics: dict = {"found": False, "synced": False, "lines": []}
+        self._palette: dict = dict(palette.DEFAULT)
+        self._art_uri: str = ""
+        self._art_token: str = ""
+        self._hidden = False
+
+        self.engine.on_track_change = self._on_track_change
+        self.engine.on_tick = self._on_tick
+        self.settings.on_change(self._on_settings_change)
+
+    # ---- lifecycle -----------------------------------------------------
+
+    def start_backend(self) -> None:
+        self.engine.start()
+        cfg = self.settings.get()
+        self.hotkeys.start()
+        self.hotkeys.apply(
+            cfg["hotkeys"]["bindings"], cfg["hotkeys"].get("enabled", True)
+        )
+
+    def shutdown(self) -> None:
+        try:
+            self.tracker._flush()
+        except Exception:
+            pass
+        self.engine.stop()
+        self.hotkeys.stop()
+        self._pool.shutdown(wait=False, cancel_futures=True)
+        self.history.close()
+
+    # ---- engine callbacks ----------------------------------------------
+
+    def _on_tick(self, st: dict) -> None:
+        self.tracker.tick(st)
+
+    def _on_track_change(self, st: dict) -> None:
+        key = st.get("track_key") or ""
+        with self._lock:
+            self._current_key = key
+            self._meta = {}
+            self._lyrics = {"found": False, "synced": False, "lines": []}
+            art, token = self.engine.artwork()
+            self._art_token = token
+            self._art_uri = _data_uri(art, _sniff_mime(art)) if art else ""
+            self._palette = palette.from_artwork(art)
+        self._pool.submit(self._enrich_track, key, dict(st))
+
+    def _enrich_track(self, key: str, st: dict) -> None:
+        """Background: iTunes metadata, hi-res art, lyrics. Cached in SQLite."""
+        cfg = self.settings.get()
+
+        if cfg["enrich"].get("enabled", True):
+            meta = None
+            cached = self.history.cache_get(
+                "meta_cache", key, int(cfg["enrich"].get("cache_days", 30))
+            )
+            if cached:
+                try:
+                    meta = json.loads(cached)
+                except json.JSONDecodeError:
+                    meta = None
+            if meta is None:
+                meta = enrich.lookup(
+                    st.get("title", ""), st.get("artist", ""), st.get("album", ""),
+                    country=cfg["enrich"].get("country", "us"),
+                    artwork_size=int(cfg["enrich"].get("artwork_size", 1000)),
+                )
+                self.history.cache_put("meta_cache", key, json.dumps(meta))
+
+            if self._current_key != key:
+                return
+            with self._lock:
+                self._meta = meta or {}
+
+            # Upgrade to the high-resolution sleeve when one exists.
+            url = (meta or {}).get("artwork_url")
+            if url:
+                data = enrich.fetch_bytes(url)
+                if data and self._current_key == key:
+                    with self._lock:
+                        self._art_uri = _data_uri(data, _sniff_mime(data))
+                        self._art_token = f"hi:{key}"
+                        self._palette = palette.from_artwork(data)
+
+        if cfg["lyrics"].get("enabled", True):
+            ly = None
+            cached = self.history.cache_get("lyrics_cache", key, 90)
+            if cached:
+                try:
+                    ly = json.loads(cached)
+                except json.JSONDecodeError:
+                    ly = None
+            if ly is None:
+                ly = lyrics_mod.fetch(
+                    st.get("title", ""), st.get("artist", ""),
+                    st.get("album", ""), st.get("duration", 0),
+                )
+                self.history.cache_put("lyrics_cache", key, json.dumps(ly))
+            if self._current_key == key:
+                with self._lock:
+                    self._lyrics = ly
+
+    def _on_settings_change(self, cfg: dict) -> None:
+        self.hotkeys.apply(
+            cfg["hotkeys"]["bindings"], cfg["hotkeys"].get("enabled", True)
+        )
+        if self.window:
+            try:
+                win_effects.apply_all(self.window, cfg["window"])
+            except Exception:
+                pass
+
+    # ---- hotkeys --------------------------------------------------------
+
+    def _on_hotkey(self, action: str) -> None:
+        if action == "play_pause":
+            self.engine.play_pause()
+        elif action == "next":
+            self.engine.next()
+        elif action == "previous":
+            self.engine.previous()
+        elif action == "toggle_window":
+            self.toggle_window()
+        elif action == "toggle_click_through":
+            cur = self.settings.section("window").get("click_through", False)
+            self.settings.update({"window": {"click_through": not cur}})
+        elif action == "cycle_layout":
+            order = ["card", "bar", "compact", "art"]
+            cur = self.settings.section("window").get("layout", "card")
+            nxt = order[(order.index(cur) + 1) % len(order)] if cur in order else "card"
+            self.set_layout(nxt)
+        elif action == "show_stats":
+            self.api_set_view("stats" if self.view != "stats" else "player")
+
+    def toggle_window(self) -> None:
+        if not self.window:
+            return
+        try:
+            if self._hidden:
+                self.window.show()
+            else:
+                self.window.hide()
+            self._hidden = not self._hidden
+        except Exception:
+            pass
+
+    def set_layout(self, layout: str) -> None:
+        self.settings.update({"window": {"layout": layout}})
+        if self.view == "player":
+            self._resize_for_view()
+
+    def _resize_for_view(self) -> None:
+        if not self.window:
+            return
+        if self.view == "player":
+            layout = self.settings.section("window").get("layout", "card")
+            w, h = LAYOUT_SIZES.get(layout, LAYOUT_SIZES["card"])
+            scale = float(self.settings.section("window").get("scale", 1.0))
+            w, h = int(w * scale), int(h * scale)
+        else:
+            w, h = PANEL_SIZE
+        try:
+            self.window.resize(w, h)
+        except Exception:
+            pass
+
+    # =====================================================================
+    # RPC surface -- everything below is callable from JavaScript as
+    # window.pywebview.api.<name>(...)
+    # =====================================================================
+
+    def get_state(self) -> dict[str, Any]:
+        st = self.engine.state()
+        with self._lock:
+            st["meta"] = dict(self._meta)
+            st["palette"] = dict(self._palette)
+            st["art_token"] = self._art_token
+            ly = self._lyrics
+        cfg = self.settings.get()
+        if cfg["lyrics"].get("enabled", True) and ly.get("found"):
+            idx = lyrics_mod.active_index(
+                ly.get("lines", []), st.get("position", 0),
+                int(cfg["lyrics"].get("offset_ms", 0)),
+            )
+            st["lyrics"] = {
+                "found": True,
+                "synced": ly.get("synced", False),
+                "active": idx,
+                "lines": ly.get("lines", []),
+            }
+        else:
+            st["lyrics"] = {"found": False, "synced": False, "active": -1, "lines": []}
+        st["view"] = self.view
+        return st
+
+    def get_artwork(self) -> dict[str, str]:
+        with self._lock:
+            return {"token": self._art_token, "uri": self._art_uri}
+
+    def get_settings(self) -> dict:
+        return self.settings.get()
+
+    def update_settings(self, patch: dict) -> dict:
+        cfg = self.settings.update(patch or {})
+        if isinstance(patch, dict) and "window" in patch:
+            w = patch["window"]
+            if "layout" in w or "scale" in w:
+                self._resize_for_view()
+        return cfg
+
+    def reset_settings(self) -> dict:
+        cfg = self.settings.reset()
+        self._on_settings_change(cfg)
+        self._resize_for_view()
+        return cfg
+
+    def get_hotkey_status(self) -> dict:
+        return {"failures": dict(self.hotkeys.failures)}
+
+    def control(self, action: str, value: Any = None) -> dict:
+        ok = False
+        if action == "play_pause":
+            ok = self.engine.play_pause()
+        elif action == "play":
+            ok = self.engine.play()
+        elif action == "pause":
+            ok = self.engine.pause()
+        elif action == "next":
+            ok = self.engine.next()
+        elif action == "previous":
+            ok = self.engine.previous()
+        elif action == "seek":
+            ok = self.engine.seek(float(value or 0))
+        elif action == "shuffle":
+            ok = self.engine.set_shuffle(bool(value))
+        elif action == "repeat":
+            ok = self.engine.set_repeat(str(value or "none"))
+        return {"ok": ok, "action": action}
+
+    def open_external(self, url: str) -> dict:
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            webbrowser.open(url)
+            return {"ok": True}
+        return {"ok": False}
+
+    def get_stats(self, days: int = 0) -> dict:
+        return self.history.stats(int(days or 0))
+
+    def clear_history(self) -> dict:
+        self.history.purge()
+        return {"ok": True}
+
+    def set_view(self, name: str) -> dict:
+        return self.api_set_view(name)
+
+    def api_set_view(self, name: str) -> dict:
+        if name not in ("player", "stats", "settings", "fix"):
+            name = "player"
+        self.view = name
+        self._resize_for_view()
+        return {"view": name}
+
+    # ---- window chrome ---------------------------------------------------
+
+    def window_action(self, action: str) -> dict:
+        if not self.window:
+            return {"ok": False}
+        try:
+            if action == "minimize":
+                self.window.minimize()
+            elif action == "close":
+                self.window.destroy()
+            elif action == "hide":
+                self.toggle_window()
+            return {"ok": True}
+        except Exception:
+            return {"ok": False}
+
+    # ---- Apple Music repair ---------------------------------------------
+
+    def fix_scan(self) -> dict:
+        """Read-only inspection of the instant-skip problem."""
+        report = applemusic_fix.scan()
+        report["skip_rate"] = self.history.recent_skip_rate()
+        return report
+
+    def fix_logs(self) -> dict:
+        """Decode Apple Music's own traces and report the real error codes."""
+        return applemusic_fix.analyze_logs()
+
+    def fix_watch(self, seconds: int = 20) -> dict:
+        """Watch media-key traffic and track changes; returns a verdict."""
+        return applemusic_fix.watch(int(seconds), self.engine)
+
+    def fix_apply(self, remedy: str, confirm: bool = False) -> dict:
+        if not confirm:
+            return {"ok": False, "error": "confirmation required"}
+        return applemusic_fix.apply(remedy)
+
+    def open_settings_folder(self) -> dict:
+        from .config import config_dir
+        try:
+            import os
+            os.startfile(str(config_dir()))  # noqa: S606 - opens Explorer
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+
+class Api:
+    """Exactly the methods the UI may call. Keeps lifecycle off the bridge."""
+
+    _EXPOSED = (
+        "get_state", "get_artwork", "get_settings", "update_settings",
+        "reset_settings", "get_hotkey_status", "control", "open_external",
+        "get_stats", "clear_history", "set_view", "window_action",
+        "fix_scan", "fix_logs", "fix_watch", "fix_apply",
+        "open_settings_folder",
+    )
+
+    def __init__(self, app: CadenceApp):
+        self._app = app
+        for name in self._EXPOSED:
+            setattr(self, name, getattr(app, name))

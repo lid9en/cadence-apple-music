@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cadence</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app" data-view="player" data-layout="card" data-status="idle">
+
+  <!-- blurred artwork backdrop -->
+  <div id="backdrop"><img id="backdrop-img" alt=""></div>
+  <div id="backdrop-scrim"></div>
+
+  <!-- title bar -->
+  <header id="titlebar" class="pywebview-drag-region">
+    <div class="tb-left pywebview-drag-region">
+      <span id="source-badge" class="badge" title="Playback source">—</span>
+    </div>
+    <div class="tb-right">
+      <button class="tb-btn" data-nav="player" title="Player">
+        <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>
+      </button>
+      <button class="tb-btn" data-nav="stats" title="Listening stats">
+        <svg viewBox="0 0 16 16"><rect x="2" y="9" width="3" height="5" rx="1"/><rect x="6.5" y="5" width="3" height="9" rx="1"/><rect x="11" y="2" width="3" height="12" rx="1"/></svg>
+      </button>
+      <button class="tb-btn" data-nav="fix" title="Fix Apple Music">
+        <svg viewBox="0 0 16 16"><path d="M11.5 1.5a4 4 0 0 0-3.6 5.7L2 13.1 3.9 15l5.9-5.9a4 4 0 0 0 5-5.2l-2.2 2.2-1.8-.4-.4-1.8z"/></svg>
+      </button>
+      <button class="tb-btn" data-nav="settings" title="Settings">
+        <svg viewBox="0 0 16 16"><path d="M8 5.2A2.8 2.8 0 1 0 8 10.8 2.8 2.8 0 0 0 8 5.2zm6 3.6V7.2l-1.7-.3a4.6 4.6 0 0 0-.5-1.2l1-1.4-1.1-1.1-1.4 1a4.6 4.6 0 0 0-1.2-.5L8.8 2H7.2l-.3 1.7a4.6 4.6 0 0 0-1.2.5l-1.4-1-1.1 1.1 1 1.4a4.6 4.6 0 0 0-.5 1.2L2 7.2v1.6l1.7.3c.1.4.3.8.5 1.2l-1 1.4 1.1 1.1 1.4-1c.4.2.8.4 1.2.5l.3 1.7h1.6l.3-1.7c.4-.1.8-.3 1.2-.5l1.4 1 1.1-1.1-1-1.4c.2-.4.4-.8.5-1.2z"/></svg>
+      </button>
+      <span class="tb-sep"></span>
+      <button class="tb-btn" data-win="minimize" title="Minimise">
+        <svg viewBox="0 0 16 16"><rect x="3" y="7.4" width="10" height="1.4" rx=".7"/></svg>
+      </button>
+      <button class="tb-btn danger" data-win="close" title="Close">
+        <svg viewBox="0 0 16 16"><path d="M4.2 3.2 8 7l3.8-3.8 1 1L9 8l3.8 3.8-1 1L8 9l-3.8 3.8-1-1L7 8 3.2 4.2z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- ============================ PLAYER ============================ -->
+  <main id="view-player" class="view">
+    <div id="art-wrap">
+      <img id="art" alt="Album artwork">
+      <div id="art-fallback">
+        <svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12M9 18a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zm10-2a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z"/></svg>
+      </div>
+    </div>
+
+    <div id="info">
+      <div id="title" class="scrollable">Nothing playing</div>
+      <div id="artist" class="scrollable">Start Apple Music</div>
+      <div id="meta"></div>
+    </div>
+
+    <div id="lyrics" hidden>
+      <div id="lyrics-inner"></div>
+    </div>
+
+    <div id="progress-row">
+      <span id="t-elapsed">0:00</span>
+      <div id="scrub" role="slider" tabindex="0" aria-label="Seek">
+        <div id="scrub-track"><div id="scrub-fill"></div><div id="scrub-knob"></div></div>
+      </div>
+      <span id="t-total">0:00</span>
+    </div>
+
+    <div id="controls">
+      <button class="ctl" data-ctl="shuffle" title="Shuffle">
+        <svg viewBox="0 0 24 24"><path d="M18 4l3 3-3 3M18 14l3 3-3 3M3 7h4l10 10h4M3 17h4l3-3M14 10l3-3h4"/></svg>
+      </button>
+      <button class="ctl" data-ctl="previous" title="Previous">
+        <svg viewBox="0 0 24 24"><path d="M7 5v14M20 5v14l-11-7z"/></svg>
+      </button>
+      <button class="ctl primary" data-ctl="play_pause" title="Play / pause">
+        <svg id="icon-play" viewBox="0 0 24 24"><path d="M7 4.5v15l13-7.5z"/></svg>
+        <svg id="icon-pause" viewBox="0 0 24 24" hidden><rect x="6.5" y="4.5" width="4" height="15" rx="1.4"/><rect x="13.5" y="4.5" width="4" height="15" rx="1.4"/></svg>
+      </button>
+      <button class="ctl" data-ctl="next" title="Next">
+        <svg viewBox="0 0 24 24"><path d="M17 5v14M4 5v14l11-7z"/></svg>
+      </button>
+      <button class="ctl" data-ctl="repeat" title="Repeat">
+        <svg viewBox="0 0 24 24"><path d="M17 2l3 3-3 3M20 5H8a4 4 0 0 0-4 4v1M7 22l-3-3 3-3M4 19h12a4 4 0 0 0 4-4v-1"/></svg>
+        <span id="repeat-dot"></span>
+      </button>
+    </div>
+
+    <div id="offline-note" hidden>
+      Apple Music isn't reporting a session. Open it and press play.
+    </div>
+  </main>
+
+  <!-- ============================ PANELS ============================ -->
+  <main id="view-stats" class="view panel">
+    <div class="panel-head">
+      <h1>Listening</h1>
+      <div class="segmented" id="stats-range">
+        <button data-days="7">7 days</button>
+        <button data-days="30">30 days</button>
+        <button data-days="365">Year</button>
+        <button data-days="0" class="on">All time</button>
+      </div>
+    </div>
+    <div id="stats-body"><p class="dim">Loading…</p></div>
+  </main>
+
+  <main id="view-fix" class="view panel">
+    <div class="panel-head">
+      <h1>Fix Apple Music</h1>
+      <button class="btn" id="fix-rescan">Rescan</button>
+    </div>
+    <div id="fix-body"><p class="dim">Loading…</p></div>
+  </main>
+
+  <main id="view-settings" class="view panel">
+    <div class="panel-head">
+      <h1>Settings</h1>
+      <div>
+        <button class="btn" id="settings-open-file">Open settings file</button>
+        <button class="btn danger" id="settings-reset">Reset all</button>
+      </div>
+    </div>
+    <div id="settings-body"></div>
+  </main>
+
+  <div id="toast"></div>
+</div>
+
+<script src="themes.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

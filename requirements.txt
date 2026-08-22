@@ -1,0 +1,16 @@
+# Cadence runtime dependencies (Windows only)
+
+# WebView2-backed UI window
+pywebview>=5.3
+pythonnet>=3.1.0
+
+# Windows System Media Transport Controls -- how we read and drive Apple Music
+winrt-runtime>=3.2.1
+winrt-Windows.Foundation>=3.2.1
+winrt-Windows.Foundation.Collections>=3.2.1
+winrt-Windows.Media>=3.2.1
+winrt-Windows.Media.Control>=3.2.1
+winrt-Windows.Storage.Streams>=3.2.1
+
+# Artwork colour extraction
+pillow>=11.0
