@@ -93,10 +93,11 @@ body {
   gap: 8px;
   padding: 8px 8px 4px 12px;
   flex: 0 0 auto;
-  -webkit-app-region: drag;
 }
 .tb-left { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.tb-right { display: flex; align-items: center; gap: 2px; -webkit-app-region: no-drag; }
+/* Grab handle: fills the gap between the badge and the buttons. */
+.tb-drag { flex: 1; align-self: stretch; min-width: 12px; cursor: grab; }
+.tb-right { display: flex; align-items: center; gap: 2px; }
 .tb-sep { width: 1px; height: 16px; background: var(--line); margin: 0 4px; }
 
 .badge {
@@ -406,6 +407,7 @@ body {
 #app[data-layout="art"] #view-player { padding: 0; gap: 0; }
 #app[data-layout="art"] #titlebar {
   position: absolute; left: 0; right: 0; top: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,.6), transparent);
   opacity: 0; transition: opacity 200ms;
 }
 #app[data-layout="art"]:hover #titlebar { opacity: 1; }

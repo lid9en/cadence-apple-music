@@ -94,6 +94,20 @@ function withAlpha(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+function luminance(hex) {
+  const chan = (c) => {
+    c /= 255;
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const [r, g, b] = hexToRgb(hex).map(chan);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function contrast(a, b) {
+  const la = luminance(a), lb = luminance(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+
 /* Blend a base theme with an artwork palette. */
 function resolveTheme(themeName, cfg, artPalette) {
   const base = THEMES[themeName] || THEMES.midnight;
@@ -104,8 +118,16 @@ function resolveTheme(themeName, cfg, artPalette) {
 
   if (adaptive && artPalette && artPalette.bg) {
     const k = Math.max(0, Math.min(1, isNaN(strength) ? 0.85 : strength));
-    t.bg = mixHex(base.bg, artPalette.bg, k);
-    t.bg2 = mixHex(base.bg2, artPalette.bg2 || artPalette.bg, k);
+
+    // The palette is always computed dark-first. A light theme has to pull
+    // those colours up toward white, or blending drags the page dark while
+    // the theme's dark body text stays put.
+    const lift = base.dark ? 0 : 0.86;
+    const artBg = mixHex(artPalette.bg, "#ffffff", lift);
+    const artBg2 = mixHex(artPalette.bg2 || artPalette.bg, "#ffffff", lift);
+
+    t.bg = mixHex(base.bg, artBg, k);
+    t.bg2 = mixHex(base.bg2, artBg2, k);
     t.accent = mixHex(base.accent, artPalette.accent, k);
     t.accentFg = artPalette.accent_fg || base.accentFg;
     t.muted = mixHex(base.muted, artPalette.muted || base.muted, k * 0.6);
@@ -116,6 +138,18 @@ function resolveTheme(themeName, cfg, artPalette) {
     t.accent = override;
     const [r, g, b] = hexToRgb(override);
     t.accentFg = 0.2126 * r + 0.7152 * g + 0.0722 * b > 140 ? "#0a0a0c" : "#ffffff";
+  }
+
+  // Last line of defence: whatever the artwork did, body text must be
+  // readable and the accent must be visible against the background.
+  if (contrast(t.fg, t.bg) < 4.5) {
+    t.fg = luminance(t.bg) < 0.4 ? "#f7f7f9" : "#131316";
+  }
+  if (contrast(t.muted, t.bg) < 2.6) {
+    t.muted = mixHex(t.fg, t.bg, 0.42);
+  }
+  if (contrast(t.accent, t.bg) < 2.4) {
+    t.accent = mixHex(t.accent, t.fg, 0.35);
   }
 
   return t;

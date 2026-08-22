@@ -198,8 +198,11 @@ function renderPlayer(st) {
     style === "remaining" ? "-" + fmtTime(Math.max(0, dur - pos)) : fmtTime(dur);
   $("#scrub").setAttribute("aria-disabled", st.can_seek ? "false" : "true");
 
-  $("#icon-play").hidden = st.playing;
-  $("#icon-pause").hidden = !st.playing;
+  // These are <svg>, and `hidden` is an HTMLElement property that SVGElement
+  // does not implement -- assigning it would silently set a JS expando and
+  // never touch the attribute the CSS matches on.
+  $("#icon-play").toggleAttribute("hidden", st.playing);
+  $("#icon-pause").toggleAttribute("hidden", !st.playing);
   $('[data-ctl="next"]').disabled = st.connected && !st.can_next;
   $('[data-ctl="previous"]').disabled = st.connected && !st.can_prev;
   $('[data-ctl="shuffle"]').classList.toggle("on", !!st.shuffle);

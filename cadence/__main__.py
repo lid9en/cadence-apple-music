@@ -23,13 +23,59 @@ def _post_show(app: CadenceApp, window) -> None:
         pass
 
 
+def _on_screen(x: int, y: int) -> bool:
+    """Is this point inside the virtual desktop, with room for a title bar?
+
+    A minimised window reports -32000,-32000. Persisting that would make
+    the next launch invisible, so positions are validated both on save
+    and on restore.
+    """
+    import ctypes
+
+    user32 = ctypes.windll.user32
+    SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
+    SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
+    vx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+    vy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+    vw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+    vh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+    if vw <= 0 or vh <= 0:
+        return False
+    return (vx - 64) <= x <= (vx + vw - 64) and vy <= y <= (vy + vh - 64)
+
+
 def _save_position(app: CadenceApp, window) -> None:
     if not app.settings.section("window").get("remember_position", True):
         return
     try:
-        app.settings.update({"window": {"x": int(window.x), "y": int(window.y)}})
+        x, y = int(window.x), int(window.y)
     except Exception:
-        pass
+        return
+    if not _on_screen(x, y):
+        return  # minimised or dragged off the desktop; keep the old value
+    app.settings.update({"window": {"x": x, "y": y}})
+
+
+def _setup_logging() -> None:
+    """A frozen, windowed build has nowhere to print, so log to a file."""
+    import logging
+
+    from .config import config_dir
+
+    logging.basicConfig(
+        filename=str(config_dir() / "cadence.log"),
+        filemode="w",
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logging.info("cadence starting; frozen=%s", getattr(sys, "frozen", False))
+    logging.info("WEB_DIR=%s exists=%s", WEB_DIR, (WEB_DIR / "index.html").is_file())
+
+    def excepthook(exc_type, exc, tb):
+        logging.error("unhandled exception", exc_info=(exc_type, exc, tb))
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = excepthook
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,6 +85,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--view", choices=("player", "stats", "settings", "fix"),
                     default="player")
     args = ap.parse_args(argv)
+
+    _setup_logging()
 
     try:
         import webview
@@ -59,6 +107,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.view != "player":
         w, h = 980, 700
 
+    # Refuse a stored position that no longer lands on a connected display.
+    sx, sy = wcfg.get("x"), wcfg.get("y")
+    if sx is None or sy is None or not _on_screen(int(sx), int(sy)):
+        sx = sy = None
+
     window = webview.create_window(
         "Cadence",
         str(WEB_DIR / "index.html"),
@@ -71,8 +124,8 @@ def main(argv: list[str] | None = None) -> int:
         on_top=bool(wcfg.get("always_on_top", True)),
         resizable=True,
         background_color="#0d0d12",
-        x=wcfg.get("x"),
-        y=wcfg.get("y"),
+        x=sx,
+        y=sy,
     )
     app.window = window
 

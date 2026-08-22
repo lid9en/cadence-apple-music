@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import threading
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +22,35 @@ from .history import History, PlayTracker
 from .hotkeys import HotkeyManager
 from .media import MediaEngine
 
-WEB_DIR = Path(__file__).parent / "web"
+def _web_dir() -> Path:
+    """Locate the bundled UI, both from source and inside a frozen build.
+
+    PyInstaller extracts data files to sys._MEIPASS, and a module's
+    __file__ inside the archive is not always an absolute path, so the
+    source-relative guess has to come last.
+    """
+    import sys
+
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates += [Path(meipass) / "cadence" / "web", Path(meipass) / "web"]
+    if getattr(sys, "frozen", False):
+        candidates.append(Path(sys.executable).parent / "cadence" / "web")
+    candidates.append(Path(__file__).resolve().parent / "web")
+
+    for c in candidates:
+        try:
+            if (c / "index.html").is_file():
+                return c
+        except OSError:
+            continue
+    return candidates[-1]
+
+
+WEB_DIR = _web_dir()
+
+log = logging.getLogger(__name__)
 
 LAYOUT_SIZES = {
     "card": (380, 560),
@@ -318,6 +347,7 @@ class CadenceApp:
         return self.api_set_view(name)
 
     def api_set_view(self, name: str) -> dict:
+        log.info("set_view(%s)", name)
         if name not in ("player", "stats", "settings", "fix"):
             name = "player"
         self.view = name
@@ -327,6 +357,7 @@ class CadenceApp:
     # ---- window chrome ---------------------------------------------------
 
     def window_action(self, action: str) -> dict:
+        log.info("window_action(%s)", action)
         if not self.window:
             return {"ok": False}
         try:

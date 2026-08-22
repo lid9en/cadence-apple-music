@@ -14,10 +14,14 @@
   <div id="backdrop-scrim"></div>
 
   <!-- title bar -->
-  <header id="titlebar" class="pywebview-drag-region">
+  <!-- Only the badge and the spacer drag the window. The header itself must
+       NOT be a drag region, or mousedown on a button starts a drag and the
+       click never lands. -->
+  <header id="titlebar">
     <div class="tb-left pywebview-drag-region">
       <span id="source-badge" class="badge" title="Playback source">—</span>
     </div>
+    <div class="tb-drag pywebview-drag-region"></div>
     <div class="tb-right">
       <button class="tb-btn" data-nav="player" title="Player">
         <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>
