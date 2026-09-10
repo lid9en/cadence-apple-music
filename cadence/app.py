@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from . import (applemusic_fix, enrich, lyrics as lyrics_mod, palette,
-               phone_audio, win_effects)
+               phone_audio, remote, win_effects)
 from .config import Settings
 from .history import History, PlayTracker
 from .hotkeys import HotkeyManager
@@ -84,6 +84,8 @@ class CadenceApp:
         self.engine = MediaEngine(self.settings)
         self.hotkeys = HotkeyManager(self._on_hotkey)
         self.phone = phone_audio.PhoneAudioBridge(self.settings)
+        self.remote = remote.RemoteServer(self.settings,
+                                          _RemoteFacade(self))
 
         self.window = None
         self.view = "player"
@@ -108,6 +110,8 @@ class CadenceApp:
     def start_backend(self) -> None:
         self.engine.start()
         self.phone.start()
+        if self.settings.section("remote").get("enabled"):
+            self.remote.start()
         cfg = self.settings.get()
         self.hotkeys.start()
         self.hotkeys.apply(
@@ -119,6 +123,7 @@ class CadenceApp:
             self.tracker._flush()
         except Exception:
             pass
+        self.remote.stop()
         self.engine.stop()
         self.phone.stop()
         self.hotkeys.stop()
@@ -396,6 +401,17 @@ class CadenceApp:
             return {"ok": False, "error": "confirmation required"}
         return applemusic_fix.apply(remedy)
 
+    # ---- phone remote ----------------------------------------------------
+
+    def remote_status(self) -> dict:
+        return self.remote.status()
+
+    def remote_start(self) -> dict:
+        return self.remote.start()
+
+    def remote_stop(self) -> dict:
+        return self.remote.stop()
+
     # ---- phone as a Bluetooth audio source ------------------------------
 
     def phone_devices(self) -> dict:
@@ -436,6 +452,53 @@ class CadenceApp:
             return {"ok": False, "error": str(e)}
 
 
+class _RemoteFacade:
+    """The narrow surface the LAN remote is allowed to reach.
+
+    Deliberately not the full Api: a request arriving over the network can
+    read now-playing and drive transport, and nothing else. No settings, no
+    repair actions, no filesystem.
+    """
+
+    def __init__(self, app: "CadenceApp"):
+        self._app = app
+
+    def state(self) -> dict:
+        st = self._app.get_state()
+        return {
+            "connected": st.get("connected"), "playing": st.get("playing"),
+            "status": st.get("status"), "title": st.get("title"),
+            "artist": st.get("artist"), "album": st.get("album"),
+            "position": st.get("position"), "duration": st.get("duration"),
+            "can_next": st.get("can_next"), "can_prev": st.get("can_prev"),
+            "can_seek": st.get("can_seek"), "shuffle": st.get("shuffle"),
+            "repeat": st.get("repeat"), "source_label": st.get("source_label"),
+            "art_token": st.get("art_token"), "palette": st.get("palette"),
+        }
+
+    def artwork(self) -> tuple[bytes | None, str]:
+        with self._app._lock:
+            uri = self._app._art_uri
+        if not uri.startswith("data:"):
+            return None, "application/octet-stream"
+        header, _, b64 = uri.partition(",")
+        mime = header[5:].split(";")[0] or "image/jpeg"
+        try:
+            return base64.b64decode(b64), mime
+        except Exception:
+            return None, "application/octet-stream"
+
+    def playlists(self) -> dict:
+        return {"playlists": []}
+
+    def control(self, action: str, value=None) -> dict:
+        allowed = {"play_pause", "play", "pause", "next", "previous",
+                   "seek", "shuffle", "repeat"}
+        if action not in allowed:
+            return {"ok": False, "error": "not permitted"}
+        return self._app.control(action, value)
+
+
 class Api:
     """Exactly the methods the UI may call. Keeps lifecycle off the bridge."""
 
@@ -444,6 +507,7 @@ class Api:
         "reset_settings", "get_hotkey_status", "control", "open_external",
         "get_stats", "clear_history", "set_view", "window_action",
         "fix_scan", "fix_logs", "fix_watch", "fix_apply",
+        "remote_status", "remote_start", "remote_stop",
         "phone_devices", "phone_connect", "phone_arm",
         "phone_cancel_arm", "phone_disconnect",
         "phone_status",

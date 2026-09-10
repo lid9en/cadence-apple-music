@@ -14,3 +14,6 @@ winrt-Windows.Storage.Streams>=3.2.1
 
 # Artwork colour extraction
 pillow>=11.0
+
+# QR code for the phone remote link
+qrcode>=7.4

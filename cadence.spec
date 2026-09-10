@@ -22,9 +22,11 @@ hiddenimports = [
     "winrt.windows.media.control",
     "winrt.windows.storage.streams",
     "PIL.Image",
+    "qrcode",
+    "qrcode.image.svg",
 ]
 
-for package in ("webview", "clr_loader", "pythonnet", "winrt"):
+for package in ("webview", "clr_loader", "pythonnet", "winrt", "qrcode"):
     try:
         d, b, h = collect_all(package)
         datas += d

@@ -86,6 +86,8 @@ MOCK_JS = r"""
       <circle cx="300" cy="300" r="110" fill="#12101a"/>
       <circle cx="300" cy="300" r="18" fill="#f107a3"/></svg>`);
 
+  let MOCK_REMOTE = { running: false, port: 8899, urls: [], primary_url: "",
+                      qr_svg: "", error: "" };
   let MOCK_PHONE_STATE = { connected: false, device_id: "",
                            device_name: "", error: "" };
   const MOCK_PHONES = [
@@ -240,6 +242,22 @@ MOCK_JS = r"""
                  injected_keys: 0, events: [], changes: [] };
       },
       async fix_apply(remedy) { return { ok: true, message: "Mock: " + remedy }; },
+      async remote_status() {
+        return MOCK_REMOTE;
+      },
+      async remote_start() {
+        MOCK_REMOTE = { running: true, port: 8899,
+          urls: ["http://192.168.10.150:8899/?t=demo"],
+          primary_url: "http://192.168.10.150:8899/?t=demo",
+          qr_svg: '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120"><rect width="120" height="120" fill="#fff"/><rect x="10" y="10" width="30" height="30"/><rect x="80" y="10" width="30" height="30"/><rect x="10" y="80" width="30" height="30"/><rect x="55" y="55" width="12" height="12"/></svg>',
+          error: "" };
+        return { ok: true, ...MOCK_REMOTE };
+      },
+      async remote_stop() {
+        MOCK_REMOTE = { running: false, port: 8899, urls: [], primary_url: "",
+                        qr_svg: "", error: "" };
+        return { ok: true, ...MOCK_REMOTE };
+      },
       async phone_devices() {
         await sleep(150);
         return {

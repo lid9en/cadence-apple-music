@@ -761,6 +761,14 @@ function renderSettings() {
     ${fieldRange("…or this fraction of the track", "", "history.min_fraction",
       0.05, 1, 0.05, 0.5, (v) => Math.round(v * 100) + "%")}
 
+    <h2>Phone remote</h2>
+    <p class="dim" style="margin-bottom:10px">
+      Control this PC from your phone's browser — now playing, artwork,
+      play/pause, skip and seeking. Scan the code with your phone's camera
+      while both are on the same Wi-Fi.
+    </p>
+    <div id="remote-body"><p class="dim">Loading…</p></div>
+
     <h2>Play from your phone</h2>
     <p class="dim" style="margin-bottom:10px">
       Turns this PC into a Bluetooth speaker. Play Apple Music on your phone,
@@ -787,6 +795,7 @@ function renderSettings() {
   `;
 
   wireSettings();
+  loadRemote();
   loadPhoneAudio();
   API.get_hotkey_status().then((s) => {
     const fails = Object.entries(s.failures || {});
@@ -912,6 +921,70 @@ function pollPhoneArming() {
     }
     if (box) box.textContent = st.arming_seconds_left + "s";
   }, 1000);
+}
+
+async function loadRemote() {
+  const box = $("#remote-body");
+  if (!box) return;
+  let st;
+  try {
+    st = await API.remote_status();
+  } catch (e) {
+    box.innerHTML = `<p class="dim">Unavailable.</p>`;
+    return;
+  }
+
+  if (!st.running) {
+    box.innerHTML = `
+      ${st.error ? `<div class="finding"><div class="top">
+          <span class="sev error">error</span>
+          <span class="ttl">Could not start</span></div>
+        <div class="det">${esc(st.error)}</div></div>` : ""}
+      <button class="btn primary" id="remote-start">Turn on phone remote</button>
+      <p class="dim" style="margin-top:8px">
+        Windows may ask you to allow Cadence through the firewall the first
+        time. Choose <b>Private networks</b>.
+      </p>`;
+    $("#remote-start").onclick = async () => {
+      const r = await API.remote_start();
+      if (!r.ok) toast(r.error || "Could not start", 6000);
+      loadRemote();
+    };
+    return;
+  }
+
+  const others = (st.urls || []).slice(1);
+  box.innerHTML = `
+    <div class="verdict">
+      <b>Phone remote is on</b>
+      Scan this with your phone's camera, or type the address into its browser.
+      <div style="display:flex;gap:16px;align-items:center;
+                  margin-top:12px;flex-wrap:wrap">
+        <div style="background:#fff;padding:8px;border-radius:10px;
+                    line-height:0">${st.qr_svg}</div>
+        <div style="min-width:0">
+          <div style="font-family:monospace;font-size:13px;word-break:break-all;
+                      user-select:text">${esc(st.primary_url)}</div>
+          ${others.length ? `<div class="det" style="margin-top:8px">
+            Other addresses on this PC:<br>${others.map(esc).join("<br>")}
+          </div>` : ""}
+        </div>
+      </div>
+      <div class="acts">
+        <button class="btn" id="remote-stop">Turn off</button>
+      </div>
+    </div>
+    <p class="dim">
+      Anyone on your network who has that link can control playback, so treat
+      it like a house key. Turning it off invalidates nothing — the link
+      keeps working next time unless you reset settings.
+    </p>`;
+
+  $("#remote-stop").onclick = async () => {
+    await API.remote_stop();
+    toast("Phone remote off");
+    loadRemote();
+  };
 }
 
 function wireSettings() {

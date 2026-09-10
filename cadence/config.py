@@ -86,6 +86,13 @@ DEFAULTS: dict[str, Any] = {
         "min_fraction": 0.5,
         "ignore_sources": [],
     },
+    "remote": {
+        # Phone remote served on the LAN. Off by default: it lets anyone
+        # with the link control playback, so it is opt-in only.
+        "enabled": False,
+        "port": 8899,
+        "token": "",
+    },
     "playlists": {
         # Cadence keeps its own playlists and plays them by handing each
         # track's Apple Music link to a client. The target is explicit
