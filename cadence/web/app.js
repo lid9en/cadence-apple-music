@@ -814,6 +814,25 @@ async function loadPhoneAudio() {
   const st = r.status || {};
   const devices = r.devices || [];
 
+  if (st.arming) {
+    box.innerHTML = `<div class="verdict">
+        <b>Waiting for your phone — <span id="phone-arming">${
+          st.arming_seconds_left}s</span></b>
+        On your phone: open <b>Control Centre</b>, press and hold the audio
+        card, tap the <b>AirPlay</b> icon, and choose this PC.<br>
+        If the PC is not listed, go to <b>Settings &rsaquo; Bluetooth</b> and
+        tap this PC there first.
+        <div class="acts">
+          <button class="btn" id="phone-cancel">Stop waiting</button>
+        </div>
+      </div>`;
+    $("#phone-cancel").onclick = async () => {
+      await API.phone_cancel_arm();
+      loadPhoneAudio();
+    };
+    return;
+  }
+
   const connected = st.connected
     ? `<div class="verdict"><b>Connected</b>
          ${esc(st.device_name || "device")} is playing through this PC.
@@ -863,14 +882,36 @@ async function loadPhoneAudio() {
   }
   $$("#phone-body [data-phone-connect]").forEach((b) => {
     b.onclick = async () => {
-      b.disabled = true;
-      b.textContent = "Connecting…";
-      const res = await API.phone_connect(b.dataset.phoneConnect,
-                                          b.dataset.phoneName);
-      toast(res.message || (res.ok ? "Connected" : "Could not connect"), 6000);
+      // open_async is a request to the phone, not an advertisement: it only
+      // succeeds once the phone brings the link up. So arm it and let the
+      // user walk to their phone rather than losing a race to a timeout.
+      await API.phone_arm(b.dataset.phoneConnect, b.dataset.phoneName, 90);
       loadPhoneAudio();
+      pollPhoneArming();
     };
   });
+}
+
+let phoneArmTimer = null;
+function pollPhoneArming() {
+  clearInterval(phoneArmTimer);
+  phoneArmTimer = setInterval(async () => {
+    let st;
+    try {
+      st = await API.phone_status();
+    } catch (e) {
+      clearInterval(phoneArmTimer);
+      return;
+    }
+    const box = $("#phone-arming");
+    if (st.connected || !st.arming) {
+      clearInterval(phoneArmTimer);
+      if (st.connected) toast("Phone connected", 4000);
+      loadPhoneAudio();
+      return;
+    }
+    if (box) box.textContent = st.arming_seconds_left + "s";
+  }, 1000);
 }
 
 function wireSettings() {

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import time
 from typing import Any, Callable
 
 # AudioPlaybackConnectionOpenResultStatus, spelled out so the UI can
@@ -85,6 +86,8 @@ class PhoneAudioBridge:
         self._connected_id: str = ""
         self._connected_name: str = ""
         self._last_error: str = ""
+        self._arming = False
+        self._arm_deadline = 0.0
 
         self.on_change: Callable[[dict], None] | None = None
 
@@ -215,6 +218,69 @@ class PhoneAudioBridge:
         self._notify()
         return result
 
+    # ---- arming --------------------------------------------------------
+
+    def arm(self, device_id: str, name: str = "", seconds: int = 90) -> dict:
+        """Keep asking the phone to connect while the user picks the PC.
+
+        `open_async` is a request to the remote device, not a passive
+        advertisement: it succeeds only once the phone actually brings the
+        audio link up, which happens when the user selects this PC as the
+        output. A single attempt therefore loses a race it cannot win --
+        the user needs time to walk over to the phone. So retry until the
+        deadline, and let the UI show the countdown.
+        """
+        if not device_id:
+            return {"ok": False, "message": "No device selected."}
+
+        with self._lock:
+            if self._arming:
+                return {"ok": True, "armed": True,
+                        "message": "Already waiting for the phone."}
+            self._arming = True
+            self._arm_deadline = time.monotonic() + max(10, int(seconds))
+            self._last_error = ""
+
+        def worker():
+            try:
+                while True:
+                    with self._lock:
+                        if not self._arming:
+                            return
+                        remaining = self._arm_deadline - time.monotonic()
+                    if remaining <= 0:
+                        with self._lock:
+                            self._arming = False
+                            self._last_error = (
+                                "Your phone never brought the audio link up. "
+                                "On the phone open Settings > Bluetooth, tap "
+                                "this PC, then pick it as the output while "
+                                "Cadence is waiting."
+                            )
+                        self._notify()
+                        return
+
+                    result = self.connect(device_id, name)
+                    if result.get("ok"):
+                        with self._lock:
+                            self._arming = False
+                        return
+                    time.sleep(2.0)
+            finally:
+                self._notify()
+
+        threading.Thread(target=worker, name="cadence-phone-arm",
+                         daemon=True).start()
+        return {"ok": True, "armed": True, "seconds": int(seconds),
+                "message": "Waiting for your phone. Select this PC as the "
+                           "audio output now."}
+
+    def cancel_arm(self) -> dict:
+        with self._lock:
+            self._arming = False
+        self._notify()
+        return {"ok": True}
+
     def disconnect(self) -> dict:
         with self._lock:
             conn, self._conn = self._conn, None
@@ -244,11 +310,14 @@ class PhoneAudioBridge:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
+            remaining = max(0, int(self._arm_deadline - time.monotonic()))                 if self._arming else 0
             return {
                 "connected": self._conn is not None,
                 "device_id": self._connected_id,
                 "device_name": self._connected_name,
                 "error": self._last_error,
+                "arming": self._arming,
+                "arming_seconds_left": remaining,
             }
 
     def _notify(self) -> None:

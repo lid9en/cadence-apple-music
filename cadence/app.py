@@ -410,7 +410,17 @@ class CadenceApp:
                 {"phone_audio": {"preferred_device_id": device_id}})
         return result
 
+    def phone_arm(self, device_id: str, name: str = "",
+                  seconds: int = 90) -> dict:
+        """Wait for the phone to bring the audio link up."""
+        self.settings.update({"phone_audio": {"preferred_device_id": device_id}})
+        return self.phone.arm(device_id, name, int(seconds))
+
+    def phone_cancel_arm(self) -> dict:
+        return self.phone.cancel_arm()
+
     def phone_disconnect(self) -> dict:
+        self.phone.cancel_arm()
         return self.phone.disconnect()
 
     def phone_status(self) -> dict:
@@ -434,7 +444,8 @@ class Api:
         "reset_settings", "get_hotkey_status", "control", "open_external",
         "get_stats", "clear_history", "set_view", "window_action",
         "fix_scan", "fix_logs", "fix_watch", "fix_apply",
-        "phone_devices", "phone_connect", "phone_disconnect",
+        "phone_devices", "phone_connect", "phone_arm",
+        "phone_cancel_arm", "phone_disconnect",
         "phone_status",
         "open_settings_folder",
     )

@@ -259,7 +259,30 @@ MOCK_JS = r"""
                              device_name: "", error: "" };
         return { ok: true };
       },
-      async phone_status() { return MOCK_PHONE_STATE; },
+      async phone_arm(id, name, seconds) {
+        MOCK_PHONE_STATE = { connected: false, device_id: id,
+          device_name: name, error: "", arming: true,
+          arming_seconds_left: seconds || 90 };
+        return { ok: true, armed: true,
+                 message: "Waiting for your phone." };
+      },
+      async phone_cancel_arm() {
+        MOCK_PHONE_STATE = { connected: false, device_id: "", device_name: "",
+                             error: "", arming: false, arming_seconds_left: 0 };
+        return { ok: true };
+      },
+      async phone_status() {
+        if (MOCK_PHONE_STATE.arming) {
+          MOCK_PHONE_STATE.arming_seconds_left -= 1;
+          if (MOCK_PHONE_STATE.arming_seconds_left <= 86) {
+            MOCK_PHONE_STATE = { connected: true,
+              device_id: MOCK_PHONE_STATE.device_id,
+              device_name: MOCK_PHONE_STATE.device_name, error: "",
+              arming: false, arming_seconds_left: 0 };
+          }
+        }
+        return MOCK_PHONE_STATE;
+      },
     },
   };
 
@@ -307,7 +330,9 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8765)
     args = ap.parse_args()
 
-    socketserver.TCPServer.allow_reuse_address = True
+    # NOT allow_reuse_address: on Windows that behaves like SO_REUSEPORT,
+    # so a second server binds the same port and requests are handed to
+    # whichever one the OS feels like -- you end up testing stale code.
     with socketserver.TCPServer(("127.0.0.1", args.port), Handler) as httpd:
         print(f"Cadence UI (mocked) on http://127.0.0.1:{args.port}", flush=True)
         try:
