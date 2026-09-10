@@ -86,6 +86,13 @@ MOCK_JS = r"""
       <circle cx="300" cy="300" r="110" fill="#12101a"/>
       <circle cx="300" cy="300" r="18" fill="#f107a3"/></svg>`);
 
+  let MOCK_PHONE_STATE = { connected: false, device_id: "",
+                           device_name: "", error: "" };
+  const MOCK_PHONES = [
+    { id: "bt-1", name: "Elliot's iPhone", enabled: true },
+    { id: "bt-2", name: "iPad", enabled: false },
+  ];
+
   let start = Date.now();
   let view = "player";
 
@@ -233,6 +240,26 @@ MOCK_JS = r"""
                  injected_keys: 0, events: [], changes: [] };
       },
       async fix_apply(remedy) { return { ok: true, message: "Mock: " + remedy }; },
+      async phone_devices() {
+        await sleep(150);
+        return {
+          devices: MOCK_PHONES,
+          status: MOCK_PHONE_STATE,
+        };
+      },
+      async phone_connect(id, name) {
+        await sleep(500);
+        MOCK_PHONE_STATE = { connected: true, device_id: id,
+                             device_name: name, error: "" };
+        return { ok: true, status: "success",
+                 message: name + " is now playing through this PC." };
+      },
+      async phone_disconnect() {
+        MOCK_PHONE_STATE = { connected: false, device_id: "",
+                             device_name: "", error: "" };
+        return { ok: true };
+      },
+      async phone_status() { return MOCK_PHONE_STATE; },
     },
   };
 

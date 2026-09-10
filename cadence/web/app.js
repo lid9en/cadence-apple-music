@@ -761,6 +761,14 @@ function renderSettings() {
     ${fieldRange("…or this fraction of the track", "", "history.min_fraction",
       0.05, 1, 0.05, 0.5, (v) => Math.round(v * 100) + "%")}
 
+    <h2>Play from your phone</h2>
+    <p class="dim" style="margin-bottom:10px">
+      Turns this PC into a Bluetooth speaker. Play Apple Music on your phone,
+      pick this PC as the output, and the sound comes out here — the track
+      and artwork show up in the player automatically.
+    </p>
+    <div id="phone-body"><p class="dim">Loading…</p></div>
+
     <h2>Hotkeys</h2>
     ${fieldSwitch("Enable global hotkeys", "", "hotkeys.enabled", true)}
     <div id="hk-warn"></div>
@@ -779,6 +787,7 @@ function renderSettings() {
   `;
 
   wireSettings();
+  loadPhoneAudio();
   API.get_hotkey_status().then((s) => {
     const fails = Object.entries(s.failures || {});
     $("#hk-warn").innerHTML = fails.length
@@ -788,6 +797,79 @@ function renderSettings() {
          <div class="det">${fails.map(([a, m]) =>
            `${esc(a)}: ${esc(m)}`).join("<br>")}</div></div>`
       : "";
+  });
+}
+
+async function loadPhoneAudio() {
+  const box = $("#phone-body");
+  if (!box) return;
+  let r;
+  try {
+    r = await API.phone_devices();
+  } catch (e) {
+    box.innerHTML = `<p class="dim">Bluetooth audio is unavailable here.</p>`;
+    return;
+  }
+
+  const st = r.status || {};
+  const devices = r.devices || [];
+
+  const connected = st.connected
+    ? `<div class="verdict"><b>Connected</b>
+         ${esc(st.device_name || "device")} is playing through this PC.
+         <div class="acts"><button class="btn" id="phone-disconnect">
+           Disconnect</button></div>
+       </div>`
+    : "";
+
+  const list = devices.length
+    ? devices.map((d) => `<div class="field">
+        <div class="lbl"><b>${esc(d.name)}</b>
+          <p>${d.enabled ? "Ready" : "Paired but not reachable right now"}</p>
+        </div>
+        <div class="ctlbox">
+          <button class="btn${d.enabled ? " primary" : ""}"
+            data-phone-connect="${esc(d.id)}" data-phone-name="${esc(d.name)}"
+            ${d.enabled ? "" : "disabled"}>Connect</button>
+        </div>
+      </div>`).join("")
+    : `<div class="finding">
+         <div class="top"><span class="sev warn">no devices</span>
+           <span class="ttl">No phone is paired with this PC yet</span></div>
+         <div class="det">
+           1. On this PC: Settings &rsaquo; Bluetooth &amp; devices &rsaquo;
+              Add device &rsaquo; Bluetooth.<br>
+           2. On your phone: Settings &rsaquo; Bluetooth, and pair with this PC.<br>
+           3. Come back here and press Refresh — your phone will be listed.
+         </div>
+       </div>`;
+
+  const err = st.error
+    ? `<p class="dim" style="margin-top:8px">${esc(st.error)}</p>` : "";
+
+  box.innerHTML = connected + list + err +
+    `<div style="margin-top:10px">
+       <button class="btn" id="phone-refresh">Refresh device list</button>
+     </div>`;
+
+  $("#phone-refresh").onclick = loadPhoneAudio;
+  const dis = $("#phone-disconnect");
+  if (dis) {
+    dis.onclick = async () => {
+      await API.phone_disconnect();
+      toast("Disconnected");
+      loadPhoneAudio();
+    };
+  }
+  $$("#phone-body [data-phone-connect]").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = "Connecting…";
+      const res = await API.phone_connect(b.dataset.phoneConnect,
+                                          b.dataset.phoneName);
+      toast(res.message || (res.ok ? "Connected" : "Could not connect"), 6000);
+      loadPhoneAudio();
+    };
   });
 }
 

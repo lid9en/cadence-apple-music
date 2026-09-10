@@ -86,6 +86,23 @@ DEFAULTS: dict[str, Any] = {
         "min_fraction": 0.5,
         "ignore_sources": [],
     },
+    "playlists": {
+        # Cadence keeps its own playlists and plays them by handing each
+        # track's Apple Music link to a client. The target is explicit
+        # because the itmss:// association is often owned by whichever
+        # Apple client was installed last.
+        "launch_target": "default",
+        "autoplay_next": True,
+        "confirm_before_launch": False,
+    },
+    "phone_audio": {
+        # Act as a Bluetooth speaker for a phone, so Apple Music playing on
+        # the phone comes out of the PC. The phone's AVRCP metadata then
+        # shows up as an ordinary media session and the player just works.
+        "enabled": False,
+        "preferred_device_id": "",
+        "auto_connect": False,
+    },
     "hotkeys": {
         "enabled": True,
         "bindings": {

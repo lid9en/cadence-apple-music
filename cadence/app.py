@@ -16,7 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
-from . import applemusic_fix, enrich, lyrics as lyrics_mod, palette, win_effects
+from . import (applemusic_fix, enrich, lyrics as lyrics_mod, palette,
+               phone_audio, win_effects)
 from .config import Settings
 from .history import History, PlayTracker
 from .hotkeys import HotkeyManager
@@ -82,6 +83,7 @@ class CadenceApp:
         self.tracker = PlayTracker(self.history, self.settings)
         self.engine = MediaEngine(self.settings)
         self.hotkeys = HotkeyManager(self._on_hotkey)
+        self.phone = phone_audio.PhoneAudioBridge(self.settings)
 
         self.window = None
         self.view = "player"
@@ -105,6 +107,7 @@ class CadenceApp:
 
     def start_backend(self) -> None:
         self.engine.start()
+        self.phone.start()
         cfg = self.settings.get()
         self.hotkeys.start()
         self.hotkeys.apply(
@@ -117,6 +120,7 @@ class CadenceApp:
         except Exception:
             pass
         self.engine.stop()
+        self.phone.stop()
         self.hotkeys.stop()
         self._pool.shutdown(wait=False, cancel_futures=True)
         self.history.close()
@@ -392,6 +396,26 @@ class CadenceApp:
             return {"ok": False, "error": "confirmation required"}
         return applemusic_fix.apply(remedy)
 
+    # ---- phone as a Bluetooth audio source ------------------------------
+
+    def phone_devices(self) -> dict:
+        """Paired devices that can send audio to this PC."""
+        return {"devices": self.phone.list_devices(),
+                "status": self.phone.status()}
+
+    def phone_connect(self, device_id: str, name: str = "") -> dict:
+        result = self.phone.connect(device_id, name)
+        if result.get("ok"):
+            self.settings.update(
+                {"phone_audio": {"preferred_device_id": device_id}})
+        return result
+
+    def phone_disconnect(self) -> dict:
+        return self.phone.disconnect()
+
+    def phone_status(self) -> dict:
+        return self.phone.status()
+
     def open_settings_folder(self) -> dict:
         from .config import config_dir
         try:
@@ -410,6 +434,8 @@ class Api:
         "reset_settings", "get_hotkey_status", "control", "open_external",
         "get_stats", "clear_history", "set_view", "window_action",
         "fix_scan", "fix_logs", "fix_watch", "fix_apply",
+        "phone_devices", "phone_connect", "phone_disconnect",
+        "phone_status",
         "open_settings_folder",
     )
 

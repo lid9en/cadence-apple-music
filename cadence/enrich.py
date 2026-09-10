@@ -108,6 +108,51 @@ def lookup(title: str, artist: str, album: str = "", *,
     }
 
 
+def _as_track(item: dict, artwork_size: int) -> dict:
+    """Normalise one iTunes Search result into a Cadence track record."""
+    release = item.get("releaseDate") or ""
+    return {
+        "title": item.get("trackName") or "",
+        "artist": item.get("artistName") or "",
+        "album": item.get("collectionName") or "",
+        "genre": item.get("primaryGenreName") or "",
+        "year": release[:4],
+        "artwork_url": upscale_artwork(item.get("artworkUrl100") or "", artwork_size),
+        "apple_url": item.get("trackViewUrl") or "",
+        "duration": round((item.get("trackTimeMillis") or 0) / 1000),
+        "explicit": item.get("trackExplicitness") == "explicit",
+        "store_id": item.get("trackId"),
+    }
+
+
+def search(term: str, *, limit: int = 25, country: str = "us",
+           artwork_size: int = 300) -> list[dict]:
+    """Free-text catalogue search, for adding tracks to a playlist.
+
+    Returns candidates in Apple's own relevance order -- unlike `lookup`,
+    which scores results against a known title/artist. Only entries with a
+    usable `apple_url` are kept, because a track Cadence cannot hand off
+    to the Apple Music app is not worth offering.
+    """
+    term = (term or "").strip()
+    if not term:
+        return []
+    params = urllib.parse.urlencode({
+        "term": term, "entity": "song",
+        "limit": max(1, min(50, int(limit))), "country": country,
+    })
+    try:
+        data = _http_json(f"{SEARCH_URL}?{params}")
+    except Exception:
+        return []
+    out = []
+    for item in data.get("results", []):
+        track = _as_track(item, artwork_size)
+        if track["apple_url"] and track["title"]:
+            out.append(track)
+    return out
+
+
 def fetch_bytes(url: str, timeout: float = 8.0, cap: int = 12 * 1024 * 1024):
     """Download artwork. Returns None rather than raising."""
     if not url:
