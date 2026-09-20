@@ -551,6 +551,16 @@ async function runWatch() {
 }
 
 const REMEDY_WARNINGS = {
+  reset_library:
+    "This closes Apple Music and clears its music library, which is where " +
+    "the download / redownload queue lives.
+
+" +
+    "A timestamped backup is taken first, and it refuses outright if it " +
+    "finds audio files that might not exist anywhere else. Your library " +
+    "and playlists come back from iCloud on next launch.
+
+Continue?",
   reset_identity:
     "This closes Apple Music and iTunes, then clears the shared Apple " +
     "device-identity (ADI) and FairPlay (SC Info) stores.\n\n" +

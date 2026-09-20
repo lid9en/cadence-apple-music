@@ -399,7 +399,8 @@ class CadenceApp:
     def fix_apply(self, remedy: str, confirm: bool = False) -> dict:
         if not confirm:
             return {"ok": False, "error": "confirmation required"}
-        return applemusic_fix.apply(remedy)
+        # The UI dialog is the confirmation; pass it through to the guard.
+        return applemusic_fix.apply(remedy, destructive_ok=True)
 
     # ---- phone remote ----------------------------------------------------
 

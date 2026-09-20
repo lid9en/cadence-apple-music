@@ -41,6 +41,11 @@ from typing import Any
 PACKAGE_FAMILY = "AppleInc.AppleMusicWin_nzyj5cx40ttqa"
 PACKAGE_NAME = "AppleInc.AppleMusicWin"
 
+# The library bundle. Its Library.musicdb also carries the download and
+# redownload queue -- there is no separate queue file to clear.
+MUSIC_LIBRARY = (Path.home() / "Music" / "Apple Music"
+                 / "Apple Music Library.musiclibrary")
+
 # Shared by legacy iTunes and the Store app -- which is exactly why having
 # both installed can break the pair of them.
 ADI_DIR = Path(r"C:\ProgramData\Apple Computer\iTunes\adi")
@@ -208,6 +213,50 @@ def check_identity() -> dict:
         "note": (
             "Shared by legacy iTunes and the Store app. If ADIOTPRequest is "
             "failing in the logs, this is the data it could not use."
+        ),
+    }
+
+
+def check_library() -> dict:
+    """The library bundle also holds the download / redownload queue.
+
+    Apple Music keeps that queue inside Library.musicdb, a proprietary
+    `hfma` container -- there is no separate queue file to clear. When the
+    logs show repeated SendRedownloadIfNecessary and StoreAppleMusicDownload
+    failures, a stale queue in here is a plausible cause, and rebuilding the
+    bundle from the cloud library is the only supported way to clear it.
+    """
+    if not MUSIC_LIBRARY.exists():
+        return {
+            "id": "library",
+            "severity": "info",
+            "title": "Music library has not been created yet",
+            "detail": str(MUSIC_LIBRARY),
+            "remedy": None,
+            "note": "It is rebuilt on next launch once you are signed in.",
+        }
+
+    db = MUSIC_LIBRARY / "Library.musicdb"
+    size = db.stat().st_size if db.exists() else 0
+    media = [f for f in MUSIC_LIBRARY.rglob("*")
+             if f.suffix.lower() in (".m4p", ".m4a", ".aac", ".mp3")]
+    return {
+        "id": "library",
+        "severity": "info",
+        "title": "Music library and download queue",
+        "detail": (
+            f"Library.musicdb {size / 1024:.0f} KB, "
+            f"{_dir_size(MUSIC_LIBRARY) / 1048576:.0f} MB total, "
+            f"{len(media)} downloaded track file(s)"
+        ),
+        "remedy": "reset_library",
+        "remedy_label": "Rebuild library (clears the download queue)",
+        "note": (
+            "Rebuilding clears any stuck download or redownload queue. Your "
+            "library and playlists come back from iCloud on next launch. "
+            "Anything you imported locally and never uploaded would be lost, "
+            "so this checks for local audio files first and refuses if it "
+            "finds any."
         ),
     }
 
@@ -501,6 +550,7 @@ def scan() -> dict[str, Any]:
         ),
     })
 
+    findings.append(check_library())
     findings.append(check_fairplay())
     findings.append(check_identity())
     findings.append(check_apple_trust())
@@ -738,7 +788,25 @@ def _stop_apple(timeout: float = 3.0) -> None:
     time.sleep(timeout)
 
 
-def apply(remedy: str) -> dict[str, Any]:
+#: Remedies that delete user data. These need `destructive_ok=True` so the
+#: function cannot be called casually -- including from a REPL while
+#: "just checking that it works". Ask me how I know.
+DESTRUCTIVE = frozenset({
+    "reset_library", "reset_identity", "reset_playready", "clear_cache",
+})
+
+
+def apply(remedy: str, destructive_ok: bool = False) -> dict[str, Any]:
+    if remedy in DESTRUCTIVE and not destructive_ok:
+        return {
+            "ok": False,
+            "error": (
+                f"{remedy!r} deletes user data. Pass destructive_ok=True to "
+                "confirm you mean it. There is no dry run for this: if you "
+                "are testing, point HOME at a scratch directory first."
+            ),
+        }
+
     pkg = package_dir()
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -776,6 +844,48 @@ def apply(remedy: str) -> dict[str, Any]:
                 "do it for you — adding a trusted root is a decision you "
                 "should make deliberately."
             ),
+        }
+
+    if remedy == "reset_library":
+        if not MUSIC_LIBRARY.exists():
+            return {"ok": False, "error": "There is no library to rebuild."}
+
+        # Refuse rather than destroy anything that is not in the cloud.
+        local = [f for f in MUSIC_LIBRARY.rglob("*")
+                 if f.suffix.lower() in (".m4p", ".m4a", ".aac", ".mp3",
+                                         ".wav", ".flac", ".aiff")]
+        if local:
+            return {
+                "ok": False,
+                "error": (
+                    f"Found {len(local)} audio file(s) inside the library. "
+                    "Those may not exist anywhere else, so this refuses to "
+                    "delete them. Move them out first."
+                ),
+            }
+
+        _stop_apple()
+        try:
+            backup = _backup(MUSIC_LIBRARY, stamp)
+        except Exception as e:
+            return {"ok": False, "error": f"backup failed, nothing removed: {e}"}
+
+        removed, failed = _empty_dir(MUSIC_LIBRARY)
+        try:
+            MUSIC_LIBRARY.rmdir()
+        except OSError:
+            pass
+
+        return {
+            "ok": not failed,
+            "message": (
+                f"Cleared the library ({removed} file(s)). Backup kept as "
+                f"{backup.name if backup else 'n/a'}. Launch Apple Music and "
+                "sign in; it rebuilds from iCloud with an empty download "
+                "queue. Delete the backup folder once playback works."
+            ),
+            "backup": str(backup) if backup else None,
+            "failed": failed[:8],
         }
 
     if remedy == "reset_identity":
